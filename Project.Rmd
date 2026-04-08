@@ -1,0 +1,325 @@
+---
+title: "Risk Structure in CDS Spreads: A Multivariate Approach"
+subtitle: "STA437 Final Project"
+author: "Betty Liu"
+output:
+  pdf_document:
+    toc_depth: 2
+    number_sections: true
+---
+
+
+# Introduction
+
+This project analyzes CDS spread data for over 600 companies across ten maturities (PX1–PX10). These spreads reflect the market's perception of each company's credit risk.
+
+Our goal is to understand how companies differ in their credit risk profiles and whether there are underlying patterns in the CDS term structure. We explore three questions:
+
+- Can a small number of components explain most of the variation in CDS spreads?
+- Can we group companies into meaningful credit risk clusters?
+- Are there latent factors driving the relationships among CDS maturities?
+
+To answer these, we apply:
+- **PCA** to reduce the dimensionality of the 10-tenor data.
+- **K-means clustering** on the PCA scores to identify company risk groups.
+- **Factor Analysis** to interpret the relationships among maturities.
+
+
+# Data and Preprocessing
+
+The dataset includes daily CDS spreads for over 1,000,000 observations across more than 600 companies. Each company has CDS quotes for ten maturities, labeled PX1 through PX10.
+
+To reduce noise and focus on firm-level credit risk, we aggregated the data by computing the average CDS spread for each company across time. This resulted in a dataset of 661 companies, each represented by ten features (PX1–PX10).
+
+We then standardized the PX columns and examined the distribution of CDS spreads across tenors to ensure data quality before continuing with multivariate methods.
+
+
+## Load the CSV
+```{r, results='asis'}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(kableExtra)
+})
+
+cds_data <- read.csv("~/STA437/final project/cds_data.csv")
+
+head(cds_data) %>%
+  kbl(caption = "Sample of CDS Spread Data (without Ticker)", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"),
+                position = "center")
+
+
+```
+
+## Preprocessing
+```{r}
+library(dplyr)
+cds_avg <- cds_data %>%
+  group_by(Ticker, Company) %>%
+  summarise(across(starts_with("PX"), \(x) mean(x, na.rm = TRUE)), .groups = "drop")
+
+```
+
+
+## Visualize CDS Term Structure
+```{r, fig.align='center', fig.width=7, fig.height=5, out.width='80%'}
+
+library(reshape2)
+library(ggplot2)
+
+cds_long <- melt(cds_avg[, -1], id.vars = "Company")
+
+ggplot(cds_long, aes(x = variable, y = value)) +
+  geom_boxplot(fill = "steelblue") +
+  labs(title = "Distribution of Average CDS Spreads Across Tenors (PX1-PX10)",
+     x = "CDS Tenor", y = "Spread") +
+    theme_minimal()
+
+```
+
+The boxplot shows that CDS spreads generally increase with maturity, which is consistent with typical term structure behavior: longer-term contracts carry more uncertainty and higher risk premiums. The distributions are fairly stable and there are no missing values, confirming the data is well-prepared for PCA and clustering.
+
+
+# Methodology
+
+We used the following multivariate techniques:
+
+- **Principal Component Analysis (PCA)** to reduce the 10-dimensional PX1–PX10 spread data to 2 components, retaining over 99% of the variance. This enabled low-dimensional visualization and simplified analysis.
+
+- **K-means clustering** on the PCA results to identify groups of companies with similar credit spread profiles. We used the elbow method to choose the optimal number of clusters.
+
+- **Factor Analysis** with varimax rotation to uncover latent structures driving the correlation among CDS maturities. This helped interpret the underlying dimensions of risk across short and long maturities.
+
+These methods were chosen for their ability to reduce complexity and reveal hidden structure in multivariate financial data.
+
+
+# Results
+
+## Principal Component Analysis (PCA)
+
+To reduce the dimensionality of the ten CDS spread variables (PX1–PX10), we applied Principal Component Analysis (PCA) after standardizing the data. PCA helps identify the dominant components driving variance in the dataset, allowing us to summarize the spread structure and visualize companies in a low-dimensional space.
+
+### Scree Plot and Cumulative Variance
+```{r, fig.align='center', fig.width=7, fig.height=5, out.width='80%'}
+
+
+cds_matrix <- cds_avg[, 3:12]  # PX1 to PX10
+
+# Standardize
+cds_scaled <- scale(cds_matrix)
+
+# PCA
+pca_result <- prcomp(cds_scaled, center = TRUE, scale. = TRUE)
+
+# Scree plot (eigenvalues)
+plot(pca_result, type = "lines", main = "Scree Plot: PCA Eigenvalues")
+
+# Cumulative variance
+cum_var <- cumsum(pca_result$sdev^2 / sum(pca_result$sdev^2))
+plot(cum_var, type = "b", pch = 19,
+     xlab = "Number of Principal Components",
+     ylab = "Cumulative Variance Explained",
+     main = "Cumulative Explained Variance (PCA)")
+```
+
+### PCA Projection of Companies
+```{r, results='asis'}
+pca_df <- cds_avg[, c("Ticker", "Company")]
+pca_df$PC1 <- pca_result$x[,1]
+pca_df$PC2 <- pca_result$x[,2]
+library(kableExtra)
+
+head(pca_df) %>%
+  kbl(caption = "PCA Scores for First 6 Companies") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered"),
+                full_width = FALSE,
+                position = "center")
+```
+
+The scree plot shows a strong drop after the first component, and the cumulative variance plot confirms that the first principal component alone explains 95.2% of the variance, while the first two together explain 99.8%. This means that most of the variation in CDS spreads across maturities can be captured in just two dimensions.
+
+The PCA projection shows companies spread along PC1 and PC2, indicating that PC1 likely represents a general credit risk level (across all maturities), while PC2 captures more subtle differences, possibly in curve shape. These results justify reducing the data to two components and proceeding with clustering in the next section.
+
+
+
+## Clustering
+
+With the PCA-reduced data, we apply K-means clustering to group companies based on their CDS spread profiles. Since the first two principal components explain almost all the variation in the data, we perform clustering in this two-dimensional space. This allows us to identify distinct credit risk patterns among firms.
+
+### K-Means Clustering
+
+We begin by selecting the number of clusters using the elbow method, then fit the K-means model and visualize the clusters.
+
+### Determine number of clusters (k) using the Elbow Method
+```{r, fig.align='center', fig.width=7, fig.height=5, out.width='80%'}
+# Code for computing and plotting elbow method (WSS)
+
+set.seed(123)  # for reproducibility
+
+wss <- sapply(1:10, function(k){
+  kmeans(pca_df[, c("PC1", "PC2")], centers = k, nstart = 10)$tot.withinss
+})
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of Clusters K",
+     ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method for Choosing K")
+```
+
+### Perform K-means with chosen k (try k = 3)
+```{r}
+# Code to fit K-means with k = 3 and assign clusters
+kmeans_result <- kmeans(pca_df[, c("PC1", "PC2")], centers = 3, nstart = 25)
+pca_df$Cluster <- as.factor(kmeans_result$cluster)
+```
+
+### Visualize clusters
+```{r, fig.align='center', fig.width=7, fig.height=5, out.width='80%'}
+# Code for ggplot cluster scatter plot (PC1 vs PC2)
+
+library(ggplot2)
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(title = "K-Means Clustering on First 2 Principal Components",
+       x = "PC2", y = "PC1") +
+  theme_minimal()
+
+```
+### Try Different k Values
+
+```{r, fig.align='center', fig.width=7, fig.height=5, out.width='80%'}
+# Code to plot for k = 2 and k = 4
+
+# Try k = 2
+set.seed(123)
+kmeans_2 <- kmeans(pca_df[, c("PC1", "PC2")], centers = 2, nstart = 25)
+pca_df$Cluster_k2 <- as.factor(kmeans_2$cluster)
+
+# Try k = 4
+set.seed(123)
+kmeans_4 <- kmeans(pca_df[, c("PC1", "PC2")], centers = 4, nstart = 25)
+pca_df$Cluster_k4 <- as.factor(kmeans_4$cluster)
+
+
+#### plot for k=2
+  ggplot(pca_df, aes(x = PC1, y = PC2, color = Cluster_k2)) +
+  geom_point(size = 2, alpha = 0.7) +
+  labs(title = "K-Means Clustering with k = 2",
+       x = "PC1", y = "PC2") +
+  theme_minimal() +
+  theme(legend.position = "right")
+  
+  
+#### plot for k=4
+  ggplot(pca_df, aes(x = PC1, y = PC2, color = Cluster_k4)) +
+  geom_point(size = 2, alpha = 0.7) +
+  labs(title = "K-Means Clustering with k = 4",
+       x = "PC1", y = "PC2") +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+The elbow plot shows a clear bend at k = 3, indicating a natural grouping at this level. The cluster plot based on PC1 and PC2 confirms that the data separates cleanly into three groups. Visual comparison with k = 2 and k = 4 shows that k = 2 is too coarse and k = 4 begins to overfit by splitting naturally cohesive groups.
+
+This justifies selecting k = 3 as our final clustering solution and sets the stage for interpreting what these groups represent in terms of credit risk.
+
+## Cluster Interpretation
+
+To understand the meaning of each cluster, we examined the average CDS spread curves (PX1–PX10) for companies within each group. We computed the mean spread at each tenor within each cluster and visualized the average term structures.
+
+### Average CDS Curves by Cluster
+```{r}
+# Code to summarize and plot average PX1–PX10 curves by cluster
+
+#### Add Cluster Labels Back to the Data
+cds_clustered <- cbind(cds_avg, Cluster = pca_df$Cluster)
+```
+
+### Summarize CDS Spreads by Cluster
+```{r, warning=FALSE}
+library(dplyr)
+cluster_summary <- cds_clustered %>%
+  group_by(Cluster) %>%
+  summarise(across(starts_with("PX"), mean, .names = "avg_{.col}"))
+library(kableExtra)
+
+cluster_summary %>%
+  kbl(caption = "Average CDS Spreads by Cluster (PX1–PX10)", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"),
+                position = "center")
+
+
+
+library(reshape2)
+library(ggplot2)
+cluster_long <- melt(cds_clustered, id.vars = "Cluster", measure.vars = paste0("PX", 1:10))
+
+ggplot(cluster_long, aes(x = variable, y = value, group = Cluster, color = Cluster)) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1.2) +
+  labs(title = "Average CDS Curve by Cluster",
+       x = "Tenor (PX1–PX10)", y = "CDS Spread") +
+  theme_minimal()
+```
+The average CDS curves show clear differences between clusters:
+
+- Cluster 1: Moderate upward slope — medium risk firms
+
+- Cluster 2: Flat, low spreads — low risk firms
+
+- Cluster 3: High spreads across maturities — high risk or distressed firms
+
+This confirms the clustering reflects real credit differences in credit profiles across firms in terms of level and shape of the CDS term structure.
+This analysis motivates a deeper look at the relationships between CDS tenors, which we explore next using factor analysis.
+
+
+## Factor Analysis
+
+To further investigate the structure of the CDS spread data, we applied factor analysis (FA) to the PX1–PX10 variables. This method identifies unobserved latent variables ("factors") that explain correlations among the observed tenors. It provides a complementary view to PCA by focusing on the dependency structure rather than maximizing variance.
+
+We fit a 2-factor model with varimax rotation to improve interpretability.
+
+
+### Select PX Variables and Standardize
+```{r}
+cds_matrix <- cds_avg[, paste0("PX", 1:10)]
+cds_scaled <- scale(cds_matrix)
+```
+
+### Run Factor Analysis with 2 factors
+```{r}
+
+fa_result <- factanal(cds_scaled, factors = 2, rotation = "varimax")
+print(fa_result)
+```
+
+
+
+### Visualize Loadings
+
+```{r, fig.align='center', fig.width=7, fig.height=5, out.width='80%'}
+# Code to plot factor loadings and label PX1–PX10
+loadings <- fa_result$loadings[, 1:2]
+plot(loadings, type = "n", main = "Factor Loadings (Varimax Rotation)")
+text(loadings, labels = rownames(loadings), col = "blue")
+abline(h = 0, v = 0, col = "gray", lty = 2)
+```
+The factor loading plot shows:
+
+- Factor 1: Driven by PX6–PX10 → long-term credit risk
+
+- Factor 2: Driven by PX1–PX3 → short-term market sentiment
+
+This confirms that the CDS curve structure is driven by at least two interpretable latent factors — one affecting long maturities and another influencing short-term spreads. The results are consistent with financial theory and match the latent groupings we observed in PCA and clustering.
+
+## Interpretation Summary
+
+The results from PCA, clustering, and factor analysis address our research questions directly. We showed that a small number of components (PC1 and PC2) explain nearly all the variation in CDS spreads, satisfying our first question. K-means clustering identified three distinct groups of companies with different credit risk profiles, answering the second. Finally, factor analysis confirmed that the CDS curve is shaped by two interpretable latent factors — short- and long-term risk — supporting our third question.
+
+These findings were consistent with our expectations based on financial theory, though the dominance of a single principal component (PC1 explaining over 95% of the variance) was stronger than anticipated. Overall, the methods worked well together to reveal clear multivariate structure in the data.
+
+
+# Conclusion
+
+This project used PCA, clustering, and factor analysis to explore the structure of CDS spreads across companies. We found that most variation in spreads can be captured by one or two dimensions, reflecting shared risk dynamics across firms. Clustering revealed three distinct groups of companies—low, moderate, and high risk—based on their term structures. Factor analysis supported these findings, uncovering two latent factors linked to short- and long-term credit risk. Together, these methods provided a clear multivariate view of how firms differ in market-perceived credit risk.
+
